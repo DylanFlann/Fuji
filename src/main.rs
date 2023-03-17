@@ -1,29 +1,22 @@
+use core::time;
+use std::str::FromStr;
+
 use anyhow::Result;
 use apibara_core::{
     node::v1alpha2::DataFinality,
     starknet::v1alpha2::{Block, FieldElement, Filter, HeaderFilter},
 };
 use apibara_sdk::{ClientBuilder, Configuration, DataMessage};
-use chrono::{DateTime, Utc};
+use bigdecimal::{num_bigint::BigUint, BigDecimal, Num};
+use chrono::{DateTime, Datelike, Utc};
+use csv::Writer;
 use tokio_stream::StreamExt;
 mod config;
 
-fn build_filter(f: Filter) -> Filter {
-    // eth contract address
-    let eth_address = FieldElement::from_hex(
-        "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7",
-    )
-    .unwrap();
-    // pedersen hash of `Transfer`.
-    let transfer_key =
-        FieldElement::from_hex("0x99cd8bde557814842a3121e8ddfd433a539b8c9f14bf31ebf108d12e6196e9")
-            .unwrap();
-
-    // filter all transfers from the eth address, include the block header
-    f.with_header(HeaderFilter::weak()).add_event(|ev| {
-        ev.with_from_address(eth_address.clone())
-            .with_keys(vec![transfer_key.clone()])
-    })
+#[derive(serde::Serialize)]
+struct Row<'a> {
+    date: &'a str,
+    amount: &'a str,
 }
 
 #[tokio::main]
@@ -42,7 +35,18 @@ async fn main() -> Result<()> {
         })
         .with_batch_size(conf.apibara.batch_size)
         .with_starting_block(conf.apibara.starting_block)
-        .with_filter(build_filter);
+        .with_filter(|f: Filter| -> Filter {
+            // pedersen hash of `Transfer`.
+            let transfer_key = FieldElement::from_hex(
+                "0x99cd8bde557814842a3121e8ddfd433a539b8c9f14bf31ebf108d12e6196e9",
+            )
+            .unwrap();
+            // filter all transfers from the eth address, include the block header
+            f.with_header(HeaderFilter::weak()).add_event(|ev| {
+                ev.with_from_address(conf.contract.token.clone())
+                    .with_keys(vec![transfer_key.clone()])
+            })
+        });
 
     // connnect to the mainnet stream
     let uri = conf.apibara.stream.parse()?;
@@ -53,6 +57,9 @@ async fn main() -> Result<()> {
 
     // send starting stream configuration to server
     data_client.send(apibara_conf).await.unwrap();
+    let mut wtr = Writer::from_path("output.csv")?;
+    let mut current_date = "none".to_string();
+    let mut current_amount = BigDecimal::from_str("0")?;
 
     // stream data from server
     while let Some(message) = data_stream.try_next().await.unwrap() {
@@ -60,6 +67,7 @@ async fn main() -> Result<()> {
         // - data: new data produced
         // - invalidate: a chain reorganization happened and some previously sent data is not valid
         // anymore
+
         match message {
             DataMessage::Data {
                 cursor,
@@ -67,6 +75,11 @@ async fn main() -> Result<()> {
                 finality,
                 batch,
             } => {
+                if finality != DataFinality::DataStatusFinalized {
+                    println!("shutting down");
+                    break;
+                }
+
                 // cursor that generated the batch. if cursor = `None`, then it's the start of the
                 // chain (includes genesis block).
                 let start_block = cursor.map(|c| c.order_key).unwrap_or_default();
@@ -76,32 +89,49 @@ async fn main() -> Result<()> {
                 //println!("Received data from block {start_block} to {end_block} with finality {finality:?}");
 
                 // go through all blocks in the batch
+
                 for block in batch {
                     // get block header and timestamp
                     let header = block.header.unwrap_or_default();
                     let timestamp: DateTime<Utc> =
                         header.timestamp.unwrap_or_default().try_into()?;
-                    //println!("  Block {:>6} ({})", header.block_number, timestamp);
 
-                    // go through all events in the block
-                    for event_with_tx in block.events {
-                        // event includes the tx that triggered the event emission
-                        // it also include the receipt in `event_with_tx.receipt`, but
-                        // it's not used in this example
-                        let event = event_with_tx.event.unwrap_or_default();
-                        let tx = event_with_tx.transaction.unwrap_or_default();
-                        let tx_hash = tx
-                            .meta
-                            .unwrap_or_default()
-                            .hash
-                            .unwrap_or_default()
-                            .to_hex();
+                    let date = format! {
+                        "{}/{}/{}",
+                        timestamp.day(),
+                        timestamp.month(),
+                        timestamp.year()
+                    };
 
-                        let from_addr = event.data[0].to_hex();
-                        let to_addr = &event.data[1];
+                    if date != current_date {
+                        if current_date != "none" {
+                            wtr.serialize(Row {
+                                date: &current_date,
+                                amount: &current_amount.to_string(),
+                            })?;
+                            println!("{}: {} eth", date, current_amount);
+                        }
 
-                        if to_addr == &conf.contract.address {
-                            println!("sent money to starknetid");
+                        current_date = date.clone();
+                        current_amount = BigDecimal::from_str("0")?;
+                    } else {
+                        for event_with_tx in block.events {
+                            let event = event_with_tx.event.unwrap_or_default();
+                            let tx = event_with_tx.transaction.unwrap_or_default();
+                            let tx_hash = tx
+                                .meta
+                                .unwrap_or_default()
+                                .hash
+                                .unwrap_or_default()
+                                .to_hex();
+                            let to_addr = &event.data[1];
+                            // we won't transfer more than 2**128 gwei so no need to check [3]
+                            if to_addr == &conf.contract.recipient {
+                                current_amount += BigDecimal::new(
+                                    BigUint::from_bytes_be(&event.data[2].to_bytes()).into(),
+                                    18,
+                                );
+                            }
                         }
                     }
                 }

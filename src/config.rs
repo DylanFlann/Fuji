@@ -20,7 +20,8 @@ pub_struct!(Apibara {
 });
 
 pub_struct!(Contract {
-    address: FieldElement,
+    token: FieldElement,
+    recipient : FieldElement,
 });
 
 pub_struct!(Config {
