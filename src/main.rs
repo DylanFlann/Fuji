@@ -1,22 +1,21 @@
-use core::time;
-use std::str::FromStr;
-
 use anyhow::Result;
 use apibara_core::{
     node::v1alpha2::DataFinality,
     starknet::v1alpha2::{Block, FieldElement, Filter, HeaderFilter},
 };
 use apibara_sdk::{ClientBuilder, Configuration, DataMessage};
-use bigdecimal::{num_bigint::BigUint, BigDecimal, Num};
+use bigdecimal::{num_bigint::BigUint, BigDecimal};
 use chrono::{DateTime, Datelike, Utc};
 use csv::Writer;
+use std::str::FromStr;
 use tokio_stream::StreamExt;
 mod config;
 
 #[derive(serde::Serialize)]
 struct Row<'a> {
     date: &'a str,
-    amount: &'a str,
+    revenue: &'a str,
+    gdp_share: &'a str,
 }
 
 #[tokio::main]
@@ -60,6 +59,7 @@ async fn main() -> Result<()> {
     let mut wtr = Writer::from_path("output.csv")?;
     let mut current_date = "none".to_string();
     let mut current_amount = BigDecimal::from_str("0")?;
+    let mut current_gdp = BigDecimal::from_str("0")?;
 
     // stream data from server
     while let Some(message) = data_stream.try_next().await.unwrap() {
@@ -102,18 +102,23 @@ async fn main() -> Result<()> {
                         timestamp.month(),
                         timestamp.year()
                     };
-
                     if date != current_date {
                         if current_date != "none" {
+                            let gdp_share = current_amount.clone() / current_gdp;
                             wtr.serialize(Row {
                                 date: &current_date,
-                                amount: &current_amount.to_string(),
+                                revenue: &current_amount.to_string(),
+                                gdp_share: &gdp_share.to_string(),
                             })?;
-                            println!("{}: {} eth", date, current_amount);
+                            println!(
+                                "{}, revenue: {} gdp_share: {}",
+                                date, current_amount, gdp_share
+                            );
                         }
 
                         current_date = date.clone();
                         current_amount = BigDecimal::from_str("0")?;
+                        current_gdp = BigDecimal::from_str("0")?;
                     } else {
                         for event_with_tx in block.events {
                             let event = event_with_tx.event.unwrap_or_default();
@@ -128,6 +133,11 @@ async fn main() -> Result<()> {
                             // we won't transfer more than 2**128 gwei so no need to check [3]
                             if to_addr == &conf.contract.recipient {
                                 current_amount += BigDecimal::new(
+                                    BigUint::from_bytes_be(&event.data[2].to_bytes()).into(),
+                                    18,
+                                );
+                            } else {
+                                current_gdp += BigDecimal::new(
                                     BigUint::from_bytes_be(&event.data[2].to_bytes()).into(),
                                     18,
                                 );
