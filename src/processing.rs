@@ -1,12 +1,14 @@
+use crate::apibara::{STARKNET_ID_UPDATE, TRANSFER_KEY};
 use crate::config;
+use crate::listeners;
 use crate::models::Row;
 use anyhow::Result;
 use apibara_core::{
     node::v1alpha2::DataFinality,
-    starknet::v1alpha2::{Block, FieldElement, Filter},
+    starknet::v1alpha2::{Block, Filter},
 };
 use apibara_sdk::{DataMessage, DataStream};
-use bigdecimal::{num_bigint::BigUint, BigDecimal, ToPrimitive, Zero};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use chrono::Datelike;
 use chrono::{DateTime, Utc};
 use csv::Writer;
@@ -36,12 +38,12 @@ pub async fn process_data_stream(
 
                 for block in batch {
                     process_block(
+                        &conf,
                         block,
                         &mut current_date,
                         &mut current_amount,
                         &mut current_gdp,
                         &mut wtr,
-                        &conf.contract.recipient,
                     )
                     .await?;
                 }
@@ -56,15 +58,14 @@ pub async fn process_data_stream(
 }
 
 async fn process_block(
+    conf: &config::Config,
     block: Block,
     current_date: &mut String,
     current_amount: &mut BigDecimal,
     current_gdp: &mut BigDecimal,
     wtr: &mut csv::Writer<std::fs::File>,
-    recipient_address: &FieldElement,
 ) -> Result<()> {
     let header = block.header.unwrap_or_default();
-
     let timestamp: DateTime<Utc> = header.timestamp.unwrap_or_default().try_into()?;
     let date = format! {
         "{}/{}/{}",
@@ -95,14 +96,26 @@ async fn process_block(
         *current_gdp = Zero::zero();
     }
 
+    let mut last_transfer_tx = "none".to_string();
+    let mut last_transfer_amount: BigDecimal = Zero::zero();
     for event_with_tx in block.events {
         let event = event_with_tx.event.unwrap_or_default();
-        let to_addr = &event.data[1];
-        let amount = BigDecimal::new(BigUint::from_bytes_be(&event.data[2].to_bytes()).into(), 18);
-        if to_addr == recipient_address {
-            *current_amount += amount;
-        } else {
-            *current_gdp += amount;
+        let tx = event_with_tx.transaction.unwrap_or_default();
+        let tx_hash: String = tx
+            .meta
+            .unwrap_or_default()
+            .hash
+            .unwrap_or_default()
+            .to_hex();
+
+        let key = &event.keys[0];
+        if key == &*TRANSFER_KEY {
+            last_transfer_tx = tx_hash;
+            last_transfer_amount =
+                listeners::on_funds_sent(&conf, &event.data, current_amount, current_gdp);
+        } else if key == &*STARKNET_ID_UPDATE && last_transfer_tx == tx_hash {
+            // we check if last_transfer_tx == tx_hash to make sure this update is linked to a purchase
+            listeners::on_starknet_id_update(&conf, &event.data, &last_transfer_amount);
         }
     }
 
