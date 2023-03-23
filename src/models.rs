@@ -4,5 +4,5 @@ use serde::Serialize;
 pub struct Row<'a> {
     pub date: &'a str,
     pub revenue: &'a str,
-    pub gdp_share: &'a str,
+    pub gdp_share: f32,
 }

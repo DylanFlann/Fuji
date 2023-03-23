@@ -6,11 +6,10 @@ use apibara_core::{
     starknet::v1alpha2::{Block, FieldElement, Filter},
 };
 use apibara_sdk::{DataMessage, DataStream};
-use bigdecimal::{num_bigint::BigUint, BigDecimal};
+use bigdecimal::{num_bigint::BigUint, BigDecimal, ToPrimitive, Zero};
 use chrono::Datelike;
 use chrono::{DateTime, Utc};
 use csv::Writer;
-use std::str::FromStr;
 use tokio_stream::StreamExt;
 
 pub async fn process_data_stream(
@@ -19,14 +18,14 @@ pub async fn process_data_stream(
 ) -> Result<()> {
     let mut wtr = Writer::from_path("output.csv")?;
     let mut current_date = "none".to_string();
-    let mut current_amount = BigDecimal::from_str("0")?;
-    let mut current_gdp = BigDecimal::from_str("0")?;
+    let mut current_amount = Zero::zero();
+    let mut current_gdp = Zero::zero();
 
     while let Some(message) = data_stream.try_next().await.unwrap() {
         match message {
             DataMessage::Data {
-                cursor,
-                end_cursor,
+                cursor: _,
+                end_cursor: _,
                 finality,
                 batch,
             } => {
@@ -80,30 +79,30 @@ async fn process_block(
             wtr.serialize(Row {
                 date: &current_date,
                 revenue: &current_amount.to_string(),
-                gdp_share: &gdp_share.to_string(),
+                gdp_share: gdp_share.to_f32().unwrap(),
             })?;
             wtr.flush().unwrap();
             println!(
-                "{}, revenue: {} gdp_share: {}",
-                date, current_amount, gdp_share
+                "date: {}, revenue: {:.2} ETH, gdp_share: {:.2}%",
+                date,
+                current_amount,
+                gdp_share.to_f32().unwrap() * 100.
             );
         }
 
         *current_date = date.clone();
-        *current_amount = BigDecimal::from_str("0")?;
-        *current_gdp = BigDecimal::from_str("0")?;
-    } else {
-        for event_with_tx in block.events {
-            let event = event_with_tx.event.unwrap_or_default();
-            let to_addr = &event.data[1];
+        *current_amount = Zero::zero();
+        *current_gdp = Zero::zero();
+    }
 
-            if to_addr == recipient_address {
-                *current_amount +=
-                    BigDecimal::new(BigUint::from_bytes_be(&event.data[2].to_bytes()).into(), 18);
-            } else {
-                *current_gdp +=
-                    BigDecimal::new(BigUint::from_bytes_be(&event.data[2].to_bytes()).into(), 18);
-            }
+    for event_with_tx in block.events {
+        let event = event_with_tx.event.unwrap_or_default();
+        let to_addr = &event.data[1];
+        let amount = BigDecimal::new(BigUint::from_bytes_be(&event.data[2].to_bytes()).into(), 18);
+        if to_addr == recipient_address {
+            *current_amount += amount;
+        } else {
+            *current_gdp += amount;
         }
     }
 
