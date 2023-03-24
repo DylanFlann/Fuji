@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate lazy_static;
 use apibara_core::starknet::v1alpha2::{Block, Filter};
 use apibara_sdk::ClientBuilder;
