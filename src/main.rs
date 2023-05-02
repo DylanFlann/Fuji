@@ -27,10 +27,12 @@ async fn main() {
                     e.downcast_ref::<ProcessingError>()
                 {
                     cursor_opt = cursor_opt2.clone();
+                    println!("connection reset, restarting from last cursor");
                 }
-                println!("connection reset, restarting from last cursor");
             }
-            _ => {}
+            Ok(_) => {
+                break;
+            }
         }
     }
 }
