@@ -1,6 +1,6 @@
 use crate::config::Config;
 use apibara_core::{
-    node::v1alpha2::DataFinality,
+    node::v1alpha2::{Cursor, DataFinality},
     starknet::v1alpha2::{FieldElement, Filter, HeaderFilter},
 };
 use apibara_sdk::Configuration;
@@ -15,8 +15,8 @@ lazy_static! {
             .unwrap();
 }
 
-pub fn create_apibara_config(conf: &Config) -> Configuration<Filter> {
-    Configuration::<Filter>::default()
+pub fn create_apibara_config(conf: &Config, cursor_opt: Option<Cursor>) -> Configuration<Filter> {
+    let output = Configuration::<Filter>::default()
         .with_finality(match conf.apibara.finality.as_str() {
             "Pending" => DataFinality::DataStatusPending,
             "Accepted" => DataFinality::DataStatusAccepted,
@@ -27,7 +27,6 @@ pub fn create_apibara_config(conf: &Config) -> Configuration<Filter> {
             }
         })
         .with_batch_size(conf.apibara.batch_size)
-        .with_starting_block(conf.apibara.starting_block)
         .with_filter(|f: Filter| -> Filter {
             f.with_header(HeaderFilter::weak())
                 .add_event(|ev| {
@@ -38,5 +37,11 @@ pub fn create_apibara_config(conf: &Config) -> Configuration<Filter> {
                     ev.with_from_address(conf.contract.recipient.clone())
                         .with_keys(vec![STARKNET_ID_UPDATE.clone()])
                 })
-        })
+        });
+
+    return match cursor_opt {
+        Some(cursor) => output.with_starting_cursor(cursor),
+
+        None => output.with_starting_block(conf.apibara.starting_block),
+    };
 }
