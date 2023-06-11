@@ -26,6 +26,7 @@ pub async fn process_data_stream(
     data_stream: &mut DataStream<Filter, Block>,
     conf: &config::Config,
 ) -> Result<()> {
+    println!("aloha3");
     let mut wtr = Writer::from_path("output.csv")?;
     let mut current_date = "none".to_string();
     let mut current_amount = Zero::zero();
@@ -42,17 +43,20 @@ pub async fn process_data_stream(
         };
         match message {
             DataMessage::Data {
-                cursor: _,
+                cursor,
                 end_cursor,
                 finality,
                 batch,
             } => {
+                println!("cursor: {}", cursor.unwrap());
+                println!("finaility: {}", finality.as_str_name());
                 if finality != DataFinality::DataStatusFinalized {
                     println!("shutting down, detected pending block");
                     return Ok(());
                 }
 
                 for block in batch {
+                    println!("block!");
                     process_block(
                         &conf,
                         block,
@@ -70,6 +74,7 @@ pub async fn process_data_stream(
             DataMessage::Invalidate { cursor } => {
                 panic!("chain reorganization detected: {cursor:?}");
             }
+            DataMessage::Heartbeat => {}
         }
     }
 }

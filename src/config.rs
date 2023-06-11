@@ -17,11 +17,12 @@ pub_struct!(Apibara {
     starting_block: u64,
     batch_size: u64,
     stream: String,
+    token: String,
 });
 
 pub_struct!(Contract {
     token: FieldElement,
-    recipient : FieldElement,
+    recipient: FieldElement,
 });
 
 pub_struct!(Config {

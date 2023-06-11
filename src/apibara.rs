@@ -27,7 +27,7 @@ pub fn create_apibara_config(conf: &Config, cursor_opt: Option<Cursor>) -> Confi
             }
         })
         .with_batch_size(conf.apibara.batch_size)
-        .with_filter(|f: Filter| -> Filter {
+        .with_filter(|mut f: Filter| -> Filter {
             f.with_header(HeaderFilter::weak())
                 .add_event(|ev| {
                     ev.with_from_address(conf.contract.token.clone())
@@ -36,7 +36,7 @@ pub fn create_apibara_config(conf: &Config, cursor_opt: Option<Cursor>) -> Confi
                 .add_event(|ev| {
                     ev.with_from_address(conf.contract.recipient.clone())
                         .with_keys(vec![STARKNET_ID_UPDATE.clone()])
-                })
+                }).build()
         });
 
     return match cursor_opt {

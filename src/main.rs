@@ -16,6 +16,7 @@ async fn main() {
         let apibara_conf = apibara::create_apibara_config(&conf, cursor_opt.clone());
         let uri = conf.apibara.stream.parse().unwrap();
         let (mut data_stream, data_client) = ClientBuilder::<Filter, Block>::default()
+            .with_bearer_token(conf.apibara.token.clone())
             .connect(uri)
             .await
             .unwrap();
@@ -23,6 +24,8 @@ async fn main() {
         data_client.send(apibara_conf).await.unwrap();
         match processing::process_data_stream(&mut data_stream, &conf).await {
             Err(e) => {
+
+                println!("aloha1: {}", e.to_string());
                 if let Some(ProcessingError::CursorError(cursor_opt2)) =
                     e.downcast_ref::<ProcessingError>()
                 {
@@ -31,6 +34,7 @@ async fn main() {
                 }
             }
             Ok(_) => {
+                println!("aloha2");
                 break;
             }
         }
